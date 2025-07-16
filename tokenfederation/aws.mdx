@@ -1,88 +1,367 @@
 ---
-title: 'Markdown Syntax'
-description: 'Text, title, and styling in standard markdown'
-icon: 'text-size'
+title: AWS Identity Federation Token Generation and Resource Retrieval
+description: Guide to generating temporary security credentials and configuring the Cloud Builder role for AWS, GCP, and Azure.
 ---
 
-## Titles
+# AWS Identity Federation Token Generation and Resource Retrieval
 
-Best used for section headers.
+This document outlines the process of generating temporary security credentials using AWS CLI to assume an IAM role, retrieving EC2 instances, and configuring the Cloud Builder role for organization-wide scanning in AWS, GCP, and Azure. The process was completed on June 23, 2025, at 07:42 PM IST, with updates for the Cloud Builder role and simplified credential generation added on July 1, 2025.
 
-```md
-## Titles
-```
+## Purpose
 
-### Subtitles
+Enable secure access to AWS resources using IAM role assumption and configure the Cloud Builder role to collect audit logs, cost data, and resource information across AWS, GCP, and Azure at the account, organization, or resource level.
 
-Best used for subsection headers.
+## Scope
 
-```md
-### Subtitles
-```
+- Generate temporary security credentials in AWS using IAM role assumption to access EC2 instances.
+- Create and assign the Cloud Builder role in AWS, GCP, and Azure for Steampipe scanning, with options to scope permissions to account, organization, or resource levels.
+- Applicable to users managing cloud resources in a single AWS account or across an AWS organization.
 
-<Tip>
+## Assumptions
 
-Each **title** and **subtitle** creates an anchor and also shows up on the table of contents on the right.
+- Administrative access to the AWS account, Google Cloud project, and Azure subscription.
+- `aws`, `gcloud`, and `az` CLIs are installed and authenticated with sufficient permissions.
+- Basic knowledge of IAM roles and cloud resource management.
+- An IAM role with appropriate permissions is available for assumption.
 
-</Tip>
+## Best Practices for Identity Federation
 
-## Text Formatting
+<Callout type="tip">
+  - **Use Short-Lived Credentials**: Generate temporary credentials with a short
+  duration (e.g., 1 hour) to minimize security risks. - **Least Privilege**:
+  Assign only necessary permissions to the IAM role. - **Secure Role Access**:
+  Restrict access to IAM roles used for assumption. - **Audit and Monitor**:
+  Regularly audit IAM policies and monitor credential usage. - **Scope
+  Permissions**: Assign the Cloud Builder role at the organization level for
+  broad scanning or at the account/resource level for granular control. - **Use
+  Managed Authentication**: Prefer `aws sts` commands for credential generation
+  to simplify the process.
+</Callout>
 
-We support most markdown formatting. Simply add `**`, `_`, or `~` around text to format it.
+## Prerequisites
 
-| Style         | How to write it   | Result          |
-| ------------- | ----------------- | --------------- |
-| Bold          | `**bold**`        | **bold**        |
-| Italic        | `_italic_`        | _italic_        |
-| Strikethrough | `~strikethrough~` | ~strikethrough~ |
+- **AWS CLI**: Installed and authenticated with `IAMFullAccess` and `EC2FullAccess` permissions.
+- **GCP CLI**: `gcloud` installed and authenticated.
+- **Azure CLI**: `az` installed and authenticated.
+- **AWS Account**: `your-aws-account-id`.
+- **Google Cloud Project**: `your-project-name` (Project Number: `your-project-number`).
+- **Azure Subscription**: `your-azure-subscription-id`.
+- **IAM Role**: `your-iam-role`.
 
-You can combine these. For example, write `**_bold and italic_**` to get **_bold and italic_** text.
+## Step-by-Step Guide to Temporary Credential Creation
 
-You need to use HTML to write superscript and subscript text. That is, add `<sup>` or `<sub>` around your text.
+### Step 1: Create an IAM Role for Assumption
 
-| Text Size   | How to write it          | Result                 |
-| ----------- | ------------------------ | ---------------------- |
-| Superscript | `<sup>superscript</sup>` | <sup>superscript</sup> |
-| Subscript   | `<sub>subscript</sub>`   | <sub>subscript</sub>   |
+Create an IAM role (`your-iam-role`) that can be assumed by an authenticated user or role.
 
-## Linking to Pages
+<Tabs>
+  <Tab title="Create the IAM Role">
+    Run the following command to create the IAM role:
 
-You can add a link by wrapping text in `[]()`. You would write `[link to google](https://google.com)` to [link to google](https://google.com).
+    <CodeBlock language="bash">
+      aws iam create-role --role-name your-iam-role \
+        --assume-role-policy-document file://assume-role-trust-policy.json \
+        --region your-region
+    </CodeBlock>
 
-Links to pages in your docs need to be root-relative. Basically, you should include the entire folder path. For example, `[link to text](/writing-content/text)` links to the page "Text" in our components section.
+  </Tab>
+  <Tab title="Trust Policy">
+    Define the trust policy in `assume-role-trust-policy.json`:
 
-Relative links like `[link to text](../text)` will open slower because we cannot optimize them as easily.
+    <CodeBlock language="json" title="assume-role-trust-policy.json">
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "AWS": "arn:aws:iam::your-aws-account-id:user/your-iam-user"
+            },
+            "Action": "sts:AssumeRole"
+          }
+        ]
+      }
+    </CodeBlock>
 
-## Blockquotes
+  </Tab>
+  <Tab title="Attach EC2 Policy">
+    Attach a read-only EC2 policy to the role:
 
-### Singleline
+    <CodeBlock language="bash">
+      aws iam attach-role-policy --role-name your-iam-role \
+        --policy-arn arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess \
+        --region your-region
+    </CodeBlock>
 
-To create a blockquote, add a `>` in front of a paragraph.
+  </Tab>
+</Tabs>
 
-> Dorothy followed her through many of the beautiful rooms in her castle.
+<Callout type="success">
+  **Outcome**: IAM role created with read-only access to EC2.
+</Callout>
 
-```md
-> Dorothy followed her through many of the beautiful rooms in her castle.
-```
+### Step 2: Create and Assign Cloud Builder Roles
 
-### Multiline
+The Cloud Builder role provides read-only access to collect cost, audit, and resource data. Configure it for AWS, GCP, and Azure with appropriate permission scopes.
 
-> Dorothy followed her through many of the beautiful rooms in her castle.
->
-> The Witch bade her clean the pots and kettles and sweep the floor and keep the fire fed with wood.
+#### 2.1 AWS: Create and Assign the Cloud Builder Role
 
-```md
-> Dorothy followed her through many of the beautiful rooms in her castle.
->
-> The Witch bade her clean the pots and kettles and sweep the floor and keep the fire fed with wood.
-```
+<Tabs>
+  <Tab title="Create the IAM Role">
+    Create the `CloudBuilder` role:
 
-### LaTeX
+    <CodeBlock language="bash">
+      aws iam create-role --role-name CloudBuilder \
+        --assume-role-policy-document file://cloud-builder-trust-policy.json \
+        --region your-region
+    </CodeBlock>
 
-Mintlify supports [LaTeX](https://www.latex-project.org) through the Latex component.
+  </Tab>
+  <Tab title="Trust Policy">
+    Define the trust policy in `cloud-builder-trust-policy.json`:
 
-<Latex>8 x (vk x H1 - H2) = (0,1)</Latex>
+    <CodeBlock language="json" title="cloud-builder-trust-policy.json">
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "AWS": "arn:aws:iam::your-aws-account-id:user/your-iam-user"
+            },
+            "Action": "sts:AssumeRole"
+          }
+        ]
+      }
+    </CodeBlock>
 
-```md
-<Latex>8 x (vk x H1 - H2) = (0,1)</Latex>
-```
+  </Tab>
+  <Tab title="Create and Attach Policy">
+    Create and attach the `CloudBuilderPolicy`:
+
+    <CodeBlock language="bash">
+      aws iam create-policy --policy-name CloudBuilderPolicy \
+        --policy-document file://cloud-builder-policy.json \
+        --region your-region
+      aws iam attach-role-policy --role-name CloudBuilder \
+        --policy-arn "arn:aws:iam::your-aws-account-id:policy/CloudBuilderPolicy" \
+        --region your-region
+    </CodeBlock>
+
+    Define the policy in `cloud-builder-policy.json`:
+
+    <CodeBlock language="json" title="cloud-builder-policy.json">
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": [
+              "ec2:DescribeInstances",
+              "ec2:DescribeRegions",
+              "iam:ListRoles",
+              "iam:ListPolicies",
+              "ce:GetCostAndUsage",
+              "ce:GetCostForecast",
+              "cloudtrail:DescribeTrails",
+              "cloudtrail:GetEventSelectors",
+              "compute-optimizer:GetEC2InstanceRecommendations",
+              "compute-optimizer:GetEBSVolumeRecommendations"
+            ],
+            "Resource": "*"
+          }
+        ]
+      }
+    </CodeBlock>
+
+  </Tab>
+  <Tab title="Assign to Steampipe">
+    Assume the role for Steampipe scanning:
+
+    <CodeBlock language="bash">
+      aws sts assume-role --role-arn "arn:aws:iam::your-aws-account-id:role/CloudBuilder" \
+        --role-session-name "SteampipeSession" \
+        --region your-region
+    </CodeBlock>
+
+  </Tab>
+</Tabs>
+
+<Callout type="success">
+  **Outcome**: Cloud Builder role created in AWS and assigned to Steampipe for
+  scanning.
+</Callout>
+
+#### 2.2 GCP: Create and Assign the Cloud Builder Role
+
+<Tabs>
+  <Tab title="Create the Custom Role">
+    Create the `CloudBuilder` role in GCP:
+
+    <CodeBlock language="bash">
+      gcloud iam roles create CloudBuilder \
+        --project=your-project-name \
+        --title "Cloud Builder" \
+        --description "Precise permissions for Cloud Builder to collect audit logs, cost data, and project information" \
+        --stage GA \
+        --permissions resourcemanager.projects.list,resourcemanager.projects.get,resourcemanager.organizations.get,logging.logEntries.list,logging.logs.list,billing.accounts.get,billing.accounts.list,recommender.computeInstanceGroupManagerMachineTypeRecommendations.list,recommender.computeInstanceMachineTypeRecommendations.list,recommender.computeDiskIdleResourceRecommendations.list
+    </CodeBlock>
+
+  </Tab>
+  <Tab title="Assign the Role">
+    Assign the role at the desired scope:
+
+    **Organization Level**:
+    <CodeBlock language="bash">
+      gcloud organizations add-iam-policy-binding your-organization-id \
+        --member "serviceAccount:your-steampipe-svc@your-project-name.iam.gserviceaccount.com" \
+        --role "projects/your-project-name/roles/CloudBuilder"
+    </CodeBlock>
+
+    **Folder Level**:
+    <CodeBlock language="bash">
+      gcloud resource-manager folders add-iam-policy-binding your-folder-id \
+        --member "serviceAccount:your-steampipe-svc@your-project-name.iam.gserviceaccount.com" \
+        --role "projects/your-project-name/roles/CloudBuilder"
+    </CodeBlock>
+
+    **Project Level**:
+    <CodeBlock language="bash">
+      gcloud projects add-iam-policy-binding your-project-name \
+        --member "serviceAccount:your-steampipe-svc@your-project-name.iam.gserviceaccount.com" \
+        --role "projects/your-project-name/roles/CloudBuilder"
+    </CodeBlock>
+
+  </Tab>
+</Tabs>
+
+<Callout type="success">
+  **Outcome**: Cloud Builder role created in GCP and assigned to the service
+  account at the desired scope.
+</Callout>
+
+#### 2.3 Azure: Create and Assign the Cloud Builder Role
+
+<Tabs>
+  <Tab title="Create the Custom Role">
+    Create the `CloudBuilder` role in Azure:
+
+    <CodeBlock language="bash">
+      az role definition create --role-definition cloud-builder-role.json
+    </CodeBlock>
+
+    Define the role in `cloud-builder-role.json`:
+
+    <CodeBlock language="json" title="cloud-builder-role.json">
+      {
+        "Name": "CloudBuilder",
+        "Description": "Precise permissions for Cloud Builder to collect audit logs, cost data, and resource information",
+        "IsCustom": true,
+        "Actions": [
+          "Microsoft.Compute/virtualMachines/read",
+          "Microsoft.Resources/subscriptions/read",
+          "Microsoft.Authorization/roleAssignments/read",
+          "Microsoft.Authorization/roleDefinitions/read",
+          "Microsoft.CostManagement/query/read",
+          "Microsoft.CostManagement/forecast/read",
+          "Microsoft.Security/auditLogs/read",
+          "Microsoft.Insights/activityLogs/read",
+          "Microsoft.Compute/recommendations/read"
+        ],
+        "AssignableScopes": [
+          "/subscriptions/your-azure-subscription-id",
+          "/providers/Microsoft.Management/managementGroups/your-management-group-id"
+        ]
+      }
+    </CodeBlock>
+
+  </Tab>
+  <Tab title="Assign the Role">
+    Assign the role at the desired scope:
+
+    **Subscription Level**:
+    <CodeBlock language="bash">
+      az role assignment create --assignee "your-steampipe-svc@your-tenant.onmicrosoft.com" \
+        --role "CloudBuilder" \
+        --scope "/subscriptions/your-azure-subscription-id"
+    </CodeBlock>
+
+    **Management Group Level**:
+    <CodeBlock language="bash">
+      az role assignment create --assignee "your-steampipe-svc@your-tenant.onmicrosoft.com" \
+        --role "CloudBuilder" \
+        --scope "/providers/Microsoft.Management/managementGroups/your-management-group-id"
+    </CodeBlock>
+
+    **Resource Group Level**:
+    <CodeBlock language="bash">
+      az role assignment create --assignee "your-steampipe-svc@your-tenant.onmicrosoft.com" \
+        --role "CloudBuilder" \
+        --scope "/subscriptions/your-azure-subscription-id/resourceGroups/your-resource-group"
+    </CodeBlock>
+
+  </Tab>
+</Tabs>
+
+<Callout type="success">
+  **Outcome**: Cloud Builder role created in Azure and assigned to the service
+  principal at the desired scope.
+</Callout>
+
+### Step 3: Generate Temporary Security Credentials
+
+<Tabs>
+  <Tab title="Authenticate with AWS CLI">
+    Ensure the AWS CLI is configured with a user or role that has permission to assume `your-iam-role`:
+
+    <CodeBlock language="bash">
+      aws configure
+    </CodeBlock>
+
+  </Tab>
+  <Tab title="Assume the IAM Role">
+    Generate temporary credentials by assuming the role:
+
+    <CodeBlock language="bash">
+      aws sts assume-role --role-arn "arn:aws:iam::your-aws-account-id:role/your-iam-role" \
+        --role-session-name "YourSessionName" \
+        --region your-region
+    </CodeBlock>
+
+  </Tab>
+  <Tab title="Outcome">
+    You will receive temporary credentials, e.g.:
+
+    <CodeBlock language="json">
+      {
+        "Credentials": {
+          "AccessKeyId": "ASIAEXAMPLE",
+          "SecretAccessKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+          "SessionToken": "IQoJb3JpZ2luX2...",
+          "Expiration": "2025-07-01T23:00:00Z"
+        }
+      }
+    </CodeBlock>
+
+    Extract `AccessKeyId`, `SecretAccessKey`, and `SessionToken` for use as `YOUR_ACCESS_KEY_ID`, `YOUR_SECRET_ACCESS_KEY`, and `YOUR_SESSION_TOKEN`.
+
+  </Tab>
+</Tabs>
+
+## Summary
+
+- **IAM Role**: `your-iam-role`
+- **Cloud Builder Role**: `CloudBuilder`
+- **Temporary Credentials**: `ASIAEXAMPLE`, `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY`, `IQoJb3JpZ2luX2...`
+- **Resource Retrieved**: EC2 instances in `your-region`.
+- **Cloud Builder Role**: Created and assigned in AWS, GCP, and Azure for Steampipe scanning, with permissions scoped to organization, account/project, or resource group levels.
+
+<Card title="Explore More" href="/onboarding">
+  Refer to the LeapFrog Labs Onboarding Guide for next steps after setting up
+  identity federation.
+</Card>
+
+<Callout type="info">
+  For additional assistance, contact
+  [support@leapfrog.cloud](mailto:support@leapfrog.cloud).
+</Callout>
