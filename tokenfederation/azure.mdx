@@ -1,59 +1,263 @@
 ---
-title: 'Images and Embeds'
-description: 'Add image, video, and other HTML elements'
-icon: 'image'
+title: Azure Identity Federation Token Generation and Resource Retrieval
+description: Guide to generating an access token in Azure, retrieving virtual machines, and configuring the Cloud Builder role for Azure, GCP, and AWS.
 ---
 
-<img
-  style={{ borderRadius: '0.5rem' }}
-  src="https://mintlify-assets.b-cdn.net/bigbend.jpg"
-/>
+# Azure Identity Federation Token Generation and Resource Retrieval
 
-## Image
+This document outlines the process of generating an access token using the Azure CLI to authenticate as a service principal, using the token to retrieve virtual machines in a specified Azure subscription, and configuring the Cloud Builder role for organization-wide scanning in Azure, GCP, and AWS. The process was completed on July 1, 2025, at 10:53 PM IST.
 
-### Using Markdown
+## Purpose
+To enable secure access to Azure resources using service principal authentication and to configure the Cloud Builder role to collect audit logs, cost data, and resource information across Azure, GCP, and AWS at the subscription, management group, or resource group level.
 
-The [markdown syntax](https://www.markdownguide.org/basic-syntax/#images) lets you add images using the following code
+## Scope
+This document covers:
+- Generating an access token in Azure using a service principal to access virtual machines.
+- Creating and assigning the Cloud Builder role in Azure, GCP, and AWS for Steampipe scanning, with options to scope permissions to subscription, management group, or resource group levels.
+- Applicable to users managing cloud resources in a single Azure subscription or across a management group.
 
-```md
-![title](/path/image.jpg)
+## Assumptions
+- The user has administrative access to the Azure subscription, Google Cloud project, and AWS account.
+- The `az`, `gcloud`, and `aws` CLIs are installed and authenticated with sufficient permissions.
+- The user has basic knowledge of service principals and cloud resource management.
+- A service principal with appropriate permissions is available for authentication.
+
+## Best Practices for Identity Federation
+- **Use Short-Lived Tokens**: Generate tokens with a short expiration time to minimize security risks.
+- **Least Privilege**: Assign only the necessary permissions to the service principal to reduce the attack surface.
+- **Secure Service Principal Access**: Restrict access to service principal credentials.
+- **Audit and Monitor**: Regularly audit role assignments and monitor token usage to detect unauthorized access.
+- **Scope Permissions Appropriately**: Assign the Cloud Builder role at the management group level for broad scanning, or at the subscription/resource group level for granular control.
+- **Use Managed Authentication**: Prefer `az account` commands for token generation to simplify the process and reduce manual key management.
+
+## Prerequisites
+- Azure CLI installed and authenticated with a user or service principal with sufficient permissions (e.g., `Contributor`, `Reader`).
+- `gcloud` CLI installed and authenticated for GCP operations.
+- `aws` CLI installed and authenticated for AWS operations.
+- Azure Subscription: `your-azure-subscription-id`.
+- Google Cloud Project: `your-project-name` (Project Number: `your-project-number`).
+- AWS Account: `your-aws-account-id`.
+- Service Principal: `your-service-principal@your-tenant.onmicrosoft.com`.
+
+## Step-by-Step Guide to Access Token Creation
+The following steps outline the process to generate an access token via service principal authentication, use it to access Azure resources, and configure the Cloud Builder role.
+
+### Step 1: Create a Service Principal
+Create a new service principal (`your-service-principal`) for authentication.
+
+#### 1.1 Create the Service Principal
+```bash
+az ad sp create-for-rbac --name your-service-principal \
+  --role Reader \
+  --scopes /subscriptions/your-azure-subscription-id
 ```
 
-Note that the image file size must be less than 5MB. Otherwise, we recommend hosting on a service like [Cloudinary](https://cloudinary.com/) or [S3](https://aws.amazon.com/s3/). You can then use that URL and embed.
+#### Outcome:
+- Service principal created with `Reader` role, e.g.:
+  ```json
+  {
+    "appId": "your-app-id",
+    "displayName": "your-service-principal",
+    "password": "your-client-secret",
+    "tenant": "your-tenant-id"
+  }
+  ```
+- Save the `appId`, `password`, and `tenant` for use as `YOUR_CLIENT_ID`, `YOUR_CLIENT_SECRET`, and `YOUR_TENANT_ID`.
 
-### Using Embeds
+### Step 2: Create and Assign Cloud Builder Roles
+The Cloud Builder role provides read-only access to collect cost, audit, and resource data. Below are instructions for creating and assigning this role in Azure, GCP, and AWS, with options to scope permissions to subscription, management group, or resource group levels.
 
-To get more customizability with images, you can also use [embeds](/writing-content/embed) to add images
-
-```html
-<img height="200" src="/path/image.jpg" />
+#### 2.1 Azure: Create and Assign the Cloud Builder Role
+##### Create the Custom Role
+```bash
+az role definition create --role-definition cloud-builder-role.json
 ```
 
-## Embeds and HTML elements
+##### `cloud-builder-role.json`:
+```json
+{
+  "Name": "CloudBuilder",
+  "Description": "Precise permissions for Cloud Builder to collect audit logs, cost data, and resource information",
+  "IsCustom": true,
+  "Actions": [
+    "Microsoft.Storage/storageAccounts/read",
+    "Microsoft.Resources/subscriptions/read",
+    "Microsoft.Authorization/roleAssignments/read",
+    "Microsoft.Authorization/roleDefinitions/read",
+    "Microsoft.CostManagement/query/action",
+    "Microsoft.CostManagement/forecast/action",
+    "Microsoft.Insights/Logs/Read",
+    "Microsoft.Compute/virtualMachines/read"
+  ],
+  "AssignableScopes": [
+    "/subscriptions/your-azure-subscription-id",
+    "/providers/Microsoft.Management/managementGroups/your-management-group-id"
+  ]
+}
+```
 
-<iframe
-  width="560"
-  height="315"
-  src="https://www.youtube.com/embed/4KzFe50RQkQ"
-  title="YouTube video player"
-  frameBorder="0"
-  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-  allowFullScreen
-  style={{ width: '100%', borderRadius: '0.5rem' }}
-></iframe>
+##### Assign the Role
+- **Subscription Level**:
+  ```bash
+  az role assignment create --assignee "your-steampipe-svc@your-tenant.onmicrosoft.com" \
+    --role "CloudBuilder" \
+    --scope "/subscriptions/your-azure-subscription-id"
+  ```
+- **Management Group Level**:
+  ```bash
+  az role assignment create --assignee "your-steampipe-svc@your-tenant.onmicrosoft.com" \
+    --role "CloudBuilder" \
+    --scope "/providers/Microsoft.Management/managementGroups/your-management-group-id"
+  ```
+- **Resource Group Level**:
+  ```bash
+  az role assignment create --assignee "your-steampipe-svc@your-tenant.onmicrosoft.com" \
+    --role "CloudBuilder" \
+    --scope "/subscriptions/your-azure-subscription-id/resourceGroups/your-resource-group"
+  ```
 
-<br />
+##### Outcome:
+- The Cloud Builder role is created in Azure and assigned to the service principal `your-steampipe-svc@your-tenant.onmicrosoft.com` at the desired scope.
 
-<Tip>
+#### 2.2 GCP: Create and Assign the Cloud Builder Role
+##### Create the Custom Role
+```bash
+gcloud iam roles create CloudBuilder \
+  --project=your-project-name \
+  --title "Cloud Builder" \
+  --description "Precise permissions for Cloud Builder to collect audit logs, cost data, and project information" \
+  --stage GA \
+  --permissions resourcemanager.projects.list,resourcemanager.projects.get,resourcemanager.organizations.get,logging.logEntries.list,logging.logs.list,billing.accounts.get,billing.accounts.list,recommender.computeInstanceGroupManagerMachineTypeRecommendations.list,recommender.computeInstanceMachineTypeRecommendations.list,recommender.computeDiskIdleResourceRecommendations.list
+```
 
-Mintlify supports [HTML tags in Markdown](https://www.markdownguide.org/basic-syntax/#html). This is helpful if you prefer HTML tags to Markdown syntax, and lets you create documentation with infinite flexibility.
+##### Assign the Role
+- **Organization Level**:
+  ```bash
+  gcloud organizations add-iam-policy-binding your-organization-id \
+    --member "serviceAccount:your-steampipe-svc@your-project-name.iam.gserviceaccount.com" \
+    --role "projects/your-project-name/roles/CloudBuilder"
+  ```
+- **Folder Level**:
+  ```bash
+  gcloud resource-manager folders add-iam-policy-binding your-folder-id \
+    --member "serviceAccount:your-steampipe-svc@your-project-name.iam.gserviceaccount.com" \
+    --role "projects/your-project-name/roles/CloudBuilder"
+  ```
+- **Project Level**:
+  ```bash
+  gcloud projects add-iam-policy-binding your-project-name \
+    --member "serviceAccount:your-steampipe-svc@your-project-name.iam.gserviceaccount.com" \
+    --role "projects/your-project-name/roles/CloudBuilder"
+  ```
 
-</Tip>
+##### Outcome:
+- The Cloud Builder role is created in GCP and assigned to the service account `your-steampipe-svc@your-project-name.iam.gserviceaccount.com` at the desired scope.
 
-### iFrames
+#### 2.3 AWS: Create and Assign the Cloud Builder Role
+##### Create the IAM Role
+```bash
+aws iam create-role --role-name CloudBuilder \
+  --assume-role-policy-document file://cloud-builder-trust-policy.json \
+  --region your-region
+```
 
-Loads another HTML page within the document. Most commonly used for embedding videos.
+##### `cloud-builder-trust-policy.json`:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::your-aws-account-id:user/your-iam-user"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+```
 
-```html
-<iframe src="https://www.youtube.com/embed/4KzFe50RQkQ"> </iframe>
+##### Create and Attach the Policy
+```bash
+aws iam create-policy --policy-name CloudBuilderPolicy \
+  --policy-document file://cloud-builder-policy.json \
+  --region your-region
+aws iam attach-role-policy --role-name CloudBuilder \
+  --policy-arn "arn:aws:iam::your-aws-account-id:policy/CloudBuilderPolicy" \
+  --region your-region
+```
+
+##### `cloud-builder-policy.json`:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances",
+        "ec2:DescribeRegions",
+        "iam:ListRoles",
+        "iam:ListPolicies",
+        "ce:GetCostAndUsage",
+        "ce:GetCostForecast",
+        "cloudtrail:DescribeTrails",
+        "cloudtrail:GetEventSelectors",
+        "compute-optimizer:GetEC2InstanceRecommendations",
+        "compute-optimizer:GetEBSVolumeRecommendations"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+##### Assign the Role to a Service
+- The Cloud Builder role can be assumed by the Steampipe service or user for scanning:
+  ```bash
+  aws sts assume-role --role-arn "arn:aws:iam::your-aws-account-id:role/CloudBuilder" \
+    --role-session-name "SteampipeSession" \
+    --region your-region
+  ```
+
+##### Outcome:
+- The Cloud Builder role is created in AWS with permissions equivalent to those in Azure and GCP, assigned to the Steampipe service via role assumption.
+
+### Step 3: Generate an Access Token
+Use `az login` to authenticate as the service principal and generate an access token.
+
+#### 3.1 Authenticate with Azure CLI
+```bash
+az login --service-principal \
+  --username YOUR_CLIENT_ID \
+  --password=YOUR_CLIENT_SECRET \
+  --tenant YOUR_TENANT_ID
+```
+
+#### 3.2 Generate the Access Token
+```bash
+az account get-access-token
+```
+
+#### Outcome:
+- Generated an access token, e.g.:
+  ```json
+  {
+    "accessToken": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsIng1dCI6...",
+    "expiresOn": "2025-07-01T23:00:00.0000000Z",
+    "subscription": "your-azure-subscription-id",
+    "tenant": "your-tenant-id",
+    "tokenType": "Bearer"
+  }
+  ```
+- Extract the `accessToken` for use as `YOUR_ACCESS_TOKEN`.
+
+## Summary
+- **Service Principal**: `your-service-principal@your-tenant.onmicrosoft.com`
+- **Cloud Builder Role**: `CloudBuilder`
+- **Access Token**: `eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsIng1dCI6...`
+- **Resource Retrieved**: Virtual machines in `your-azure-subscription-id`.
+- **Cloud Builder Role**: Created and assigned in Azure, GCP, and AWS for Steampipe scanning, with permissions scoped to management group, subscription/project, or resource group levels as needed.
+
+This process demonstrates how to generate an access token via service principal authentication, access Azure resources, and configure the Cloud Builder role across Azure, GCP, and AWS for comprehensive cloud scanning.
 ```

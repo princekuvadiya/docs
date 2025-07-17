@@ -5,29 +5,24 @@ description: Guide to generating temporary security credentials and configuring 
 
 # AWS Identity Federation Token Generation and Resource Retrieval
 
-This document outlines the process of generating temporary security credentials using AWS CLI to assume an IAM role in a specified AWS account, using the credentials to retrieve EC2 instances, and configuring the Cloud Builder role for organization-wide scanning in AWS, GCP, and Azure. The process was completed on **June 23, 2025**, at **07:42 PM IST**, with updates for the Cloud Builder role and simplified credential generation added on **July 1, 2025**.
+This document outlines the process of generating temporary security credentials using AWS CLI to assume an IAM role in a specified AWS account, using the credentials to retrieve EC2 instances, and configuring the Cloud Builder role for organization-wide scanning in AWS, GCP, and Azure. The process was completed on June 23, 2025, at 07:42 PM IST, with updates for the Cloud Builder role and simplified credential generation added on July 1, 2025.
 
 ## Purpose
-
 To enable secure access to AWS resources using IAM role assumption and to configure the Cloud Builder role to collect audit logs, cost data, and resource information across AWS, GCP, and Azure at the account, organization, or resource level.
 
 ## Scope
-
 This document covers:
-
 - Generating temporary security credentials in AWS using IAM role assumption to access EC2 instances.
 - Creating and assigning the Cloud Builder role in AWS, GCP, and Azure for Steampipe scanning, with options to scope permissions to account, organization, or resource levels.
 - Applicable to users managing cloud resources in a single AWS account or across an AWS organization.
 
 ## Assumptions
-
 - The user has administrative access to the AWS account, Google Cloud project, and Azure subscription.
 - The `aws`, `gcloud`, and `az` CLIs are installed and authenticated with sufficient permissions.
 - The user has basic knowledge of IAM roles and cloud resource management.
 - An IAM role with appropriate permissions is available for assumption.
 
 ## Best Practices for Identity Federation
-
 - **Use Short-Lived Credentials**: Generate temporary credentials with a short duration (e.g., 1 hour) to minimize security risks.
 - **Least Privilege**: Assign only the necessary permissions to the IAM role to reduce the attack surface.
 - **Secure Role Access**: Restrict access to IAM roles used for assumption.
@@ -36,7 +31,6 @@ This document covers:
 - **Use Managed Authentication**: Prefer `aws sts` commands for credential generation to simplify the process and reduce manual key management.
 
 ## Prerequisites
-
 - AWS CLI installed and authenticated with a user or role with sufficient permissions (e.g., `IAMFullAccess`, `EC2FullAccess`).
 - `gcloud` CLI installed and authenticated for GCP operations.
 - `az` CLI installed and authenticated for Azure operations.
@@ -46,11 +40,240 @@ This document covers:
 - IAM Role: `your-iam-role`.
 
 ## Step-by-Step Guide to Temporary Credential Creation
-
 The following steps outline the process to generate temporary security credentials via IAM role assumption, use them to access AWS resources, and configure the Cloud Builder role.
 
 ### Step 1: Create an IAM Role for Assumption
-
 Create a new IAM role (`your-iam-role`) that can be assumed by an authenticated user or role.
 
 #### 1.1 Create the IAM Role
+```bash
+aws iam create-role --role-name your-iam-role \
+  --assume-role-policy-document file://assume-role-trust-policy.json \
+  --region your-region
+```
+
+#### `assume-role-trust-policy.json`:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::your-aws-account-id:user/your-iam-user"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+```
+
+#### 1.2 Attach a Policy for EC2 Access
+```bash
+aws iam attach-role-policy --role-name your-iam-role \
+  --policy-arn arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess \
+  --region your-region
+```
+
+#### Outcome:
+- IAM role created and granted read-only access to EC2.
+
+### Step 2: Create and Assign Cloud Builder Roles
+The Cloud Builder role provides read-only access to collect cost, audit, and resource data. Below are instructions for creating and assigning this role in AWS, GCP, and Azure, with options to scope permissions to account, organization, or resource levels.
+
+#### 2.1 AWS: Create and Assign the Cloud Builder Role
+##### Create the IAM Role
+```bash
+aws iam create-role --role-name CloudBuilder \
+  --assume-role-policy-document file://cloud-builder-trust-policy.json \
+  --region your-region
+```
+
+##### `cloud-builder-trust-policy.json`:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::your-aws-account-id:user/your-iam-user"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+```
+
+##### Create and Attach the Policy
+```bash
+aws iam create-policy --policy-name CloudBuilderPolicy \
+  --policy-document file://cloud-builder-policy.json \
+  --region your-region
+aws iam attach-role-policy --role-name CloudBuilder \
+  --policy-arn "arn:aws:iam::your-aws-account-id:policy/CloudBuilderPolicy" \
+  --region your-region
+```
+
+##### `cloud-builder-policy.json`:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances",
+        "ec2:DescribeRegions",
+        "iam:ListRoles",
+        "iam:ListPolicies",
+        "ce:GetCostAndUsage",
+        "ce:GetCostForecast",
+        "cloudtrail:DescribeTrails",
+        "cloudtrail:GetEventSelectors",
+        "compute-optimizer:GetEC2InstanceRecommendations",
+        "compute-optimizer:GetEBSVolumeRecommendations"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+##### Assign the Role to a Service
+- The Cloud Builder role can be assumed by the Steampipe service or user for scanning:
+  ```bash
+  aws sts assume-role --role-arn "arn:aws:iam::your-aws-account-id:role/CloudBuilder" \
+    --role-session-name "SteampipeSession" \
+    --region your-region
+  ```
+
+##### Outcome:
+- The Cloud Builder role is created in AWS with permissions equivalent to those in GCP and Azure, assigned to the Steampipe service via role assumption.
+
+#### 2.2 GCP: Create and Assign the Cloud Builder Role
+##### Create the Custom Role
+```bash
+gcloud iam roles create CloudBuilder \
+  --project=your-project-name \
+  --title "Cloud Builder" \
+  --description "Precise permissions for Cloud Builder to collect audit logs, cost data, and project information" \
+  --stage GA \
+  --permissions resourcemanager.projects.list,resourcemanager.projects.get,resourcemanager.organizations.get,logging.logEntries.list,logging.logs.list,billing.accounts.get,billing.accounts.list,recommender.computeInstanceGroupManagerMachineTypeRecommendations.list,recommender.computeInstanceMachineTypeRecommendations.list,recommender.computeDiskIdleResourceRecommendations.list
+```
+
+##### Assign the Role
+- **Organization Level**:
+  ```bash
+  gcloud organizations add-iam-policy-binding your-organization-id \
+    --member "serviceAccount:your-steampipe-svc@your-project-name.iam.gserviceaccount.com" \
+    --role "projects/your-project-name/roles/CloudBuilder"
+  ```
+- **Folder Level**:
+  ```bash
+  gcloud resource-manager folders add-iam-policy-binding your-folder-id \
+    --member "serviceAccount:your-steampipe-svc@your-project-name.iam.gserviceaccount.com" \
+    --role "projects/your-project-name/roles/CloudBuilder"
+  ```
+- **Project Level**:
+  ```bash
+  gcloud projects add-iam-policy-binding your-project-name \
+    --member "serviceAccount:your-steampipe-svc@your-project-name.iam.gserviceaccount.com" \
+    --role "projects/your-project-name/roles/CloudBuilder"
+  ```
+
+##### Outcome:
+- The Cloud Builder role is created in GCP and assigned to the service account `your-steampipe-svc@your-project-name.iam.gserviceaccount.com` at the desired scope.
+
+#### 2.3 Azure: Create and Assign the Cloud Builder Role
+##### Create the Custom Role
+```bash
+az role definition create --role-definition cloud-builder-role.json
+```
+
+##### `cloud-builder-role.json`:
+```json
+{
+  "Name": "CloudBuilder",
+  "Description": "Precise permissions for Cloud Builder to collect audit logs, cost data, and resource information",
+  "IsCustom": true,
+  "Actions": [
+    "Microsoft.Compute/virtualMachines/read",
+    "Microsoft.Resources/subscriptions/read",
+    "Microsoft.Authorization/roleAssignments/read",
+    "Microsoft.Authorization/roleDefinitions/read",
+    "Microsoft.CostManagement/query/read",
+    "Microsoft.CostManagement/forecast/read",
+    "Microsoft.Security/auditLogs/read",
+    "Microsoft.Insights/activityLogs/read",
+    "Microsoft.Compute/recommendations/read"
+  ],
+  "AssignableScopes": [
+    "/subscriptions/your-azure-subscription-id",
+    "/providers/Microsoft.Management/managementGroups/your-management-group-id"
+  ]
+}
+```
+
+##### Assign the Role
+- **Subscription Level**:
+  ```bash
+  az role assignment create --assignee "your-steampipe-svc@your-tenant.onmicrosoft.com" \
+    --role "CloudBuilder" \
+    --scope "/subscriptions/your-azure-subscription-id"
+  ```
+- **Management Group Level**:
+  ```bash
+  az role assignment create --assignee "your-steampipe-svc@your-tenant.onmicrosoft.com" \
+    --role "CloudBuilder" \
+    --scope "/providers/Microsoft.Management/managementGroups/your-management-group-id"
+  ```
+- **Resource Group Level**:
+  ```bash
+  az role assignment create --assignee "your-steampipe-svc@your-tenant.onmicrosoft.com" \
+    --role "CloudBuilder" \
+    --scope "/subscriptions/your-azure-subscription-id/resourceGroups/your-resource-group"
+  ```
+
+##### Outcome:
+- The Cloud Builder role is created in Azure and assigned to the service principal `your-steampipe-svc@your-tenant.onmicrosoft.com` at the desired scope.
+
+### Step 3: Generate Temporary Security Credentials
+Use `aws sts assume-role` to generate temporary credentials by assuming the IAM role.
+
+#### 3.1 Authenticate with AWS CLI
+Ensure the AWS CLI is configured with a user or role that has permission to assume `your-iam-role`:
+```bash
+aws configure
+```
+
+#### 3.2 Assume the IAM Role
+```bash
+aws sts assume-role --role-arn "arn:aws:iam::your-aws-account-id:role/your-iam-role" \
+  --role-session-name "YourSessionName" \
+  --region your-region
+```
+
+#### Outcome:
+- Received temporary credentials, e.g.:
+  ```json
+  {
+    "Credentials": {
+      "AccessKeyId": "ASIAEXAMPLE",
+      "SecretAccessKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+      "SessionToken": "IQoJb3JpZ2luX2...",
+      "Expiration": "2025-07-01T23:00:00Z"
+    }
+  }
+  ```
+- Extract the `AccessKeyId`, `SecretAccessKey`, and `SessionToken` for use as `YOUR_ACCESS_KEY_ID`, `YOUR_SECRET_ACCESS_KEY`, and `YOUR_SESSION_TOKEN`.
+
+## Summary
+- **IAM Role**: `your-iam-role`
+- **Cloud Builder Role**: `CloudBuilder`
+- **Temporary Credentials**: `ASIAEXAMPLE`, `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY`, `IQoJb3JpZ2luX2...`
+- **Resource Retrieved**: EC2 instances in `your-region`.
+- **Cloud Builder Role**: Created and assigned in AWS, GCP, and Azure for Steampipe scanning, with permissions scoped to organization, account/project, or resource group levels as needed.
+
+This process demonstrates how to generate temporary security credentials via IAM role assumption, access AWS resources, and configure the Cloud Builder role across AWS, GCP, and Azure for comprehensive cloud scanning.
+```

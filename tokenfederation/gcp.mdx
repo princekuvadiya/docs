@@ -1,37 +1,280 @@
 ---
-title: 'Code Blocks'
-description: 'Display inline code and code blocks'
-icon: 'code'
+title: GCP Workload Identity Federation Token Generation and Resource Retrieval
+description: Guide to generating a Workload Identity Federation token in GCP, retrieving Compute Engine instances, and configuring the Cloud Builder role for GCP, AWS, and Azure.
 ---
 
-## Basic
+# GCP Workload Identity Federation Token Generation and Resource Retrieval
 
-### Inline Code
+This document outlines the process of generating a Workload Identity Federation token using Google Cloud Shell, using the token to retrieve Compute Engine instances in a specified project, and configuring the Cloud Builder role for organization-wide scanning in GCP, AWS, and Azure. The process was completed on June 17, 2025, at 11:00 PM IST, with updates for the Cloud Builder role and simplified token generation added on July 1, 2025.
 
-To denote a `word` or `phrase` as code, enclose it in backticks (`).
+## Purpose
+To enable secure access to Google Cloud resources using Workload Identity Federation and to configure the Cloud Builder role to collect audit logs, cost data, and resource information across GCP, AWS, and Azure at the project, organization, or folder level.
 
+## Scope
+This document covers:
+- Setting up Workload Identity Federation in Google Cloud to generate and use a federated token for accessing Compute Engine instances via service account impersonation.
+- Creating and assigning the Cloud Builder role in GCP, AWS, and Azure for Steampipe scanning, with options to scope permissions to project, organization, or folder levels.
+- Applicable to users managing cloud resources in a single project or across an organization.
+
+## Assumptions
+- The user has administrative access to the Google Cloud project, AWS account, and Azure subscription.
+- The `gcloud`, `aws`, and `az` CLIs are installed and authenticated with sufficient permissions.
+- The user has basic knowledge of IAM roles and cloud resource management.
+- A service account with appropriate permissions is available for impersonation.
+
+## Best Practices for Workload Identity Federation
+- **Use Short-Lived Tokens**: Generate tokens with a short expiration time (e.g., 1 hour) to minimize security risks.
+- **Least Privilege**: Assign only the necessary permissions to the service account or role to reduce the attack surface.
+- **Secure Service Account Access**: Restrict access to service accounts used for impersonation.
+- **Audit and Monitor**: Regularly audit IAM policies and monitor token usage to detect unauthorized access.
+- **Scope Permissions Appropriately**: Assign the Cloud Builder role at the organization level for broad scanning, or at the project/folder level for granular control.
+- **Use Managed Authentication**: Prefer `gcloud auth` commands for token generation to simplify the process and reduce manual key management.
+
+## Prerequisites
+- Google Cloud Shell environment or equivalent terminal setup.
+- `gcloud` CLI installed and authenticated with a user or service account with sufficient permissions (e.g., `roles/iam.admin`, `roles/compute.viewer`).
+- `aws` CLI installed and authenticated for AWS operations.
+- `az` CLI installed and authenticated for Azure operations.
+- Google Cloud Project: `your-project-name` (Project Number: `your-project-number`).
+- AWS Account: `your-aws-account-id`.
+- Azure Subscription: `your-azure-subscription-id`.
+- Service Account: `your-service-account@your-project-name.iam.gserviceaccount.com`.
+
+## Step-by-Step Guide to Workload Identity Token Creation
+The following steps outline the process to set up Workload Identity Federation, generate a token via service account impersonation, and use it to access resources, followed by instructions to configure the Cloud Builder role.
+
+### Step 1: Set Up a New Workload Identity Pool
+Create a new workload identity pool (`your-identity-pool`).
+
+#### 1.1 Create the Workload Identity Pool
+```bash
+gcloud iam workload-identity-pools create your-identity-pool \
+  --project=your-project-name \
+  --location=global \
+  --display-name="Your Identity Pool"
 ```
-To denote a `word` or `phrase` as code, enclose it in backticks (`).
+
+#### Outcome:
+- Pool created successfully.
+
+### Step 2: Create and Assign Cloud Builder Roles
+The Cloud Builder role provides read-only access to collect cost, audit, and resource data. Below are instructions for creating and assigning this role in GCP, AWS, and Azure, with options to scope permissions to project, organization, or folder levels.
+
+#### 2.1 GCP: Create and Assign the Cloud Builder Role
+##### Create the Custom Role
+```bash
+gcloud iam roles create CloudBuilder \
+  --project=your-project-name \
+  --title "Cloud Builder" \
+  --description "Precise permissions for Cloud Builder to collect audit logs, cost data, and project information" \
+  --stage GA \
+  --permissions resourcemanager.projects.list,resourcemanager.projects.get,resourcemanager.organizations.get,logging.logEntries.list,logging.logs.list,billing.accounts.get,billing.accounts.list,recommender.computeInstanceGroupManagerMachineTypeRecommendations.list,recommender.computeInstanceMachineTypeRecommendations.list,recommender.computeDiskIdleResourceRecommendations.list
 ```
 
-### Code Block
+##### Assign the Role
+- **Organization Level**:
+  ```bash
+  gcloud organizations add-iam-policy-binding your-organization-id \
+    --member "serviceAccount:your-steampipe-svc@your-project-name.iam.gserviceaccount.com" \
+    --role "projects/your-project-name/roles/CloudBuilder"
+  ```
+- **Folder Level**:
+  ```bash
+  gcloud resource-manager folders add-iam-policy-binding your-folder-id \
+    --member "serviceAccount:your-steampipe-svc@your-project-name.iam.gserviceaccount.com" \
+    --role "projects/your-project-name/roles/CloudBuilder"
+  ```
+- **Project Level**:
+  ```bash
+  gcloud projects add-iam-policy-binding your-project-name \
+    --member "serviceAccount:your-steampipe-svc@your-project-name.iam.gserviceaccount.com" \
+    --role "projects/your-project-name/roles/CloudBuilder"
+  ```
 
-Use [fenced code blocks](https://www.markdownguide.org/extended-syntax/#fenced-code-blocks) by enclosing code in three backticks and follow the leading ticks with the programming language of your snippet to get syntax highlighting. Optionally, you can also write the name of your code after the programming language.
+##### Outcome:
+- The Cloud Builder role is created in GCP and assigned to the service account `your-steampipe-svc@your-project-name.iam.gserviceaccount.com` at the desired scope (organization, folder, or project).
 
-```java HelloWorld.java
-class HelloWorld {
-    public static void main(String[] args) {
-        System.out.println("Hello, World!");
+#### 2.2 AWS: Create and Assign the Cloud Builder Role
+##### Create the IAM Role
+```bash
+aws iam create-role --role-name CloudBuilder \
+  --assume-role-policy-document file://cloud-builder-trust-policy.json \
+  --region your-region
+```
+
+##### `cloud-builder-trust-policy.json`:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "rolesanywhere.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
     }
+  ]
 }
 ```
 
-````md
-```java HelloWorld.java
-class HelloWorld {
-    public static void main(String[] args) {
-        System.out.println("Hello, World!");
+##### Create and Attach the Policy
+```bash
+aws iam create-policy --policy-name CloudBuilderPolicy \
+  --policy-document file://cloud-builder-policy.json \
+  --region your-region
+aws iam attach-role-policy --role-name CloudBuilder \
+  --policy-arn "arn:aws:iam::your-aws-account-id:policy/CloudBuilderPolicy" \
+  --region your-region
+```
+
+##### `cloud-builder-policy.json`:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances",
+        "ec2:DescribeRegions",
+        "iam:ListRoles",
+        "iam:ListPolicies",
+        "ce<GetCostAndUsage",
+        "ce:GetCostForecast",
+        "cloudtrail:DescribeTrails",
+        "cloudtrail:GetEventSelectors",
+        "compute-optimizer:GetEC2InstanceRecommendations",
+        "compute-optimizer:GetEBSVolumeRecommendations"
+      ],
+      "Resource": "*"
     }
+  ]
 }
 ```
-````
+
+##### Assign the Role to aAgency
+- Assign the role to the Steampipe service by updating the IAM Roles Anywhere profile:
+  ```bash
+  aws iam update-profile --profile-id
+
+ your-profile-id \
+    --role-arns "arn:aws:iam::your-aws-account-id:role/CloudBuilder" \
+    --region your-region
+  ```
+
+##### Outcome:
+- The Cloud Builder role is created in AWS with permissions equivalent to the GCP role, assigned to the Steampipe service via IAM Roles Anywhere.
+
+#### 2.3 Azure: Create and Assign the Cloud Builder Role
+##### Dereference the Service Principal
+The service principal needs to be dereferenced in Azure Active Directory (Azure AD). You can find it by running:
+```bash
+az ad sp list --display-name your-steampipe-svc
+```
+
+##### Create the Custom Role
+```bash
+az role definition create --role-definition cloud-builder-role.json
+```
+
+##### `cloud-builder-role.json`:
+```json
+{
+  "Name": "CloudBuilder",
+  "Description": "Precise permissions for Cloud Builder to collect audit logs, cost data, and resource information",
+  "IsCustom": true,
+  "Actions": [
+    "Microsoft.Compute/virtualMachines/read",
+    "Microsoft.Resources/subscriptions/read",
+    "Microsoft.Authorization/roleAssignments/read",
+    "Microsoft.Authorization/roleDefinitions/read",
+    "Microsoft.CostManagement/query/read",
+    "Microsoft.CostManagement/forecast/read",
+    "Microsoft.Security/auditLogs/read",
+    "Microsoft.Insights/activityLogs/read",
+    "Microsoft.Compute/recommendations/read"
+  ],
+  "AssignableScopes": [
+    "/subscriptions/your-azure-subscription-id",
+    "/providers/Microsoft.Management/managementGroups/your-management-group-id"
+  ]
+}
+```
+
+##### Assign the Role
+- **Subscription Level**:
+  ```bash
+  az role assignment create --assignee "your-steampipe-svc@your-tenant.onmicrosoft.com" \
+    --role "CloudBuilder" \
+    --scope "/subscriptions/your-azure-subscription-id"
+  ```
+- **Management Group Level**:
+  ```bash
+  az role assignment create --assignee "your-steampipe-svc@your-tenant.onmicrosoft.com" \
+    --role "CloudBuilder" \
+    --scope "/providers/Microsoft.Management/managementGroups/your-management-group-id"
+  ```
+- **Resource Group Level**:
+  ```bash
+  az role assignment create --assignee "your-steampipe-svc@your-tenant.onmicrosoft.com" \
+    --role "CloudBuilder" \
+    --scope "/subscriptions/your-azure-subscription-id/resourceGroups/your-resource-group"
+  ```
+
+##### Outcome:
+- The Cloud Builder role is created in Azure and assigned to the service principal `your-steampipe-svc@your-tenant.onmicrosoft.com` at the desired scope (subscription, management group, or resource group).
+
+### Step 3: Create a Service Account and Grant Access
+Create a service account (`your-service-account`) and grant it the necessary permissions.
+
+#### 3.1 Create the Service Account
+```bash
+gcloud iam service-accounts create your-service-account \
+  --project=your-project-name \
+  --display-name="Your Service Account"
+```
+
+#### Outcome:
+- Service account created successfully.
+
+#### 3.2 Grant Workload Identity User Role
+```bash
+gcloud iam service-accounts add-iam-policy-binding your-service-account@your-project-name.iam.gserviceaccount.com \
+  --project=your-project-name \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principal://iam.googleapis.com/projects/your-project-number/locations/global/workloadIdentityPools/your-identity-pool/subject/your-subject-id"
+```
+
+#### Outcome:
+- Permissions granted successfully.
+
+### Step 4: Generate an Access Token via Service Account Impersonation
+Use `gcloud auth` to authenticate and impersonate the service account to obtain an access token.
+
+#### 4.1 Authenticate with gcloud
+```bash
+gcloud auth login
+```
+
+#### 4.2 Generate the Access Token
+```bash
+gcloud auth print-access-token --impersonate-service-account=your-service-account@your-project-name.iam.gserviceaccount.com
+```
+
+#### Outcome:
+- Generated an access token, e.g.:
+  ```
+  ya29.c.Kp0B...
+  ```
+- This token was used as `YOUR_ACCESS_TOKEN`.
+
+## Summary
+- **Workload Identity Pool**: `your-identity-pool`
+- **Service Account**: `your-service-account@your-project-name.iam.gserviceaccount.com`
+- **Access Token**: `ya29.c.Kp0B...` (example)
+- **Resource Retrieved**: Compute Engine instances in `your-zone` zone.
+- **Cloud Builder Role**: Created and assigned in GCP, AWS, and Azure for Steampipe scanning, with permissions scoped to organization, folder/project, or subscription/resource group levels as needed.
+
+This process demonstrates how to set up Workload Identity Federation, generate an access token via service account impersonation, access Google Cloud resources, and configure the Cloud Builder role across GCP, AWS, and Azure for comprehensive cloud scanning.
+```
